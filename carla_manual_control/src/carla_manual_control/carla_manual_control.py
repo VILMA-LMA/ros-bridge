@@ -43,6 +43,7 @@ from carla_msgs.msg import CarlaEgoVehicleControl
 from carla_msgs.msg import CarlaEgoVehicleStatus
 from carla_msgs.msg import CarlaEgoVehicleInfo
 from carla_msgs.msg import CarlaStatus
+from carla_msgs.msg import CarlaDeepData
 
 try:
     import pygame
@@ -159,8 +160,20 @@ class KeyboardControl(object):
 
         self._autopilot_enabled = False
         self._control = CarlaEgoVehicleControl()
+        self._deep = CarlaDeepData()
         self._steer_cache = 0.0
-        
+
+        self.vehicle_deep_pb = rospy.Publisher(
+            "/carla/vehicle_deep_data", CarlaDeepData, queue_size=1)
+
+        self.vehicle_deep_sub_status = rospy.Subscriber(
+            "/carla/{}/vehicle_status".format(self.role_name),
+            CarlaEgoVehicleStatus, self.update_deep)
+
+        self.vehicle_deep_sub_image = rospy.Subscriber(
+            "/carla/ego_vehicle/camera/rgb/front/image_color", Image,
+            self.update_deep_image)
+
         self.vehicle_control_manual_override_publisher = rospy.Publisher(
             "/carla/{}/vehicle_control_manual_override".format(self.role_name), Bool, queue_size=1, latch=True)
         self.vehicle_control_manual_override = False
@@ -172,13 +185,14 @@ class KeyboardControl(object):
             "/carla/status", CarlaStatus, self._on_new_carla_frame)
         
         self.set_autopilot(self._autopilot_enabled)
-        
+
         self.set_vehicle_control_manual_override(
             self.vehicle_control_manual_override)  # disable manual override
 
     def __del__(self):
         self.auto_pilot_enable_publisher.unregister()
         self.vehicle_control_publisher.unregister()
+        self.vehicle_deep_pb.unregister()
         self.vehicle_control_manual_override_publisher.unregister()
 
     def set_vehicle_control_manual_override(self, enable):
@@ -187,6 +201,18 @@ class KeyboardControl(object):
         """
         self.hud.notification('Set vehicle control manual override to: {}'.format(enable))
         self.vehicle_control_manual_override_publisher.publish((Bool(data=enable)))
+
+    def update_deep_image(self, image):
+        self._deep.image = image
+
+    def update_deep(self, newStatus):
+        self._deep.control = newStatus.control
+
+    def publish_deep_data(self):
+        """
+        publish useful deep learning data
+        """
+        self.vehicle_deep_pb.publish(self._deep)
 
     def set_autopilot(self, enable):
         """
@@ -238,6 +264,7 @@ class KeyboardControl(object):
         As CARLA only processes one vehicle control command per tick,
         send the current from within here (once per frame)
         """
+        self.publish_deep_data()
         if not self._autopilot_enabled and self.vehicle_control_manual_override:
             try:
                 self.vehicle_control_publisher.publish(self._control)
